@@ -1,0 +1,22 @@
+version: '3.8'
+
+# Development override file
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  backend:
+    environment:
+      - RELOAD=true
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8003
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next

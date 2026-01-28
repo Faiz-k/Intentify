@@ -1,0 +1,27 @@
+# Environment and secrets (never commit)
+.env
+.env.local
+.env*.local
+**/.env
+backend/.env
+!**/.env.example
+
+# Credential / key files
+**/service-account*.json
+**/*-key.json
+**/credentials*.json
+apis
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+nul
