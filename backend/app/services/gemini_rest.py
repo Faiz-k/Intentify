@@ -74,3 +74,22 @@ async def generate_text(prompt: str, api_key: Optional[str] = None) -> str:
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8")
         raise Exception(f"Gemini REST HTTP {e.code}: {raw}")
+
+
+async def check_model() -> dict:
+    """
+    Lightweight check that Gemini REST (gemini-2.5-flash-lite) is reachable.
+    Returns {"status": "ok", "model": "..."} or {"status": "error", "error": "..."}.
+    """
+    key = get_api_key()
+    if not key:
+        return {"status": "error", "error": "VERTEX_AI_API_KEY or GOOGLE_API_KEY not set"}
+    try:
+        out = await generate_text("Reply with exactly: OK", key)
+        return {
+            "status": "ok",
+            "model": MODEL,
+            "reply": (out.strip()[:80] + "…") if len(out.strip()) > 80 else out.strip(),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}

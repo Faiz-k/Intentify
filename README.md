@@ -27,13 +27,12 @@ Turn your screen and voice (or typed requests) into high-quality AI prompts. Cap
 
 ## Prerequisites
 
-- **Docker** and **Docker Compose** (recommended), or
-- **Node.js 20+**, **Python 3.11+**, and **PostgreSQL 16** for local runs.
+- **Docker** and **Docker Compose** (v2 `docker compose` or v1 `docker-compose`)
 - **Google Cloud** project with:
   - [Vertex AI API](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com) enabled
   - [Speech-to-Text API](https://console.cloud.google.com/apis/library/speech.googleapis.com) enabled
-- **API key** for Vertex AI (or Gemini), and optionally a **service account** for Speech-to-Text.  
-  See [Environment variables](#environment-variables) below.
+- **API key** for Vertex AI (or Gemini), and optionally a **service account** for Speech-to-Text  
+  (see [Environment variables](#environment-variables)).
 
 ---
 
@@ -46,36 +45,37 @@ Turn your screen and voice (or typed requests) into high-quality AI prompts. Cap
 
 2. **Configure backend env**
    - Copy `backend/.env.example` to `backend/.env` and fill in your values.
-   - Set at least:
-     - `GOOGLE_PROJECT_ID` — your GCP project ID  
-     - `GOOGLE_LOCATION` — e.g. `us-central1`  
-     - `VERTEX_AI_API_KEY` — Vertex AI / Gemini API key  
-     - Service account vars (see [Environment variables](#environment-variables)) if you use Speech-to-Text.
+   - Set at least: `GOOGLE_PROJECT_ID`, `GOOGLE_LOCATION`, `VERTEX_AI_API_KEY`.  
+   - Add [service account](#environment-variables) vars if you use **audio capture**.
 
-3. **Build and run**
+3. **Build and run with Docker**
    ```bash
-   docker compose build && docker compose up -d
+   make build && make up
    ```
+   Or without Make: `docker compose build && docker compose up -d`
 
 4. **Open the app**
-   - Frontend: **http://localhost:3000**  
-   - API: **http://localhost:8003**  
-   - Health: **http://localhost:8003/health**
+   - **Frontend:** http://localhost:3000  
+   - **API:** http://localhost:8003  
+   - **Health:** http://localhost:8003/health
 
 ---
 
-## Using the Makefile
+## Makefile (Docker)
+
+All targets use **Docker Compose**:
 
 ```bash
 make build          # Build images
 make up             # Start all services (detached)
-make dev            # Start with hot-reload (docker-compose + dev override)
+make dev            # Dev mode: hot-reload for backend + frontend
+make prod           # Production: no source mounts, ENVIRONMENT=production
 make down           # Stop services
 make logs           # Follow all logs
 make logs-backend   # Backend logs only
 make logs-frontend  # Frontend logs only
 make restart-backend
-make db-shell       # PostgreSQL psql
+make db-shell       # PostgreSQL psql (intentify / intentify_db)
 make clean          # Stop and remove volumes
 make rebuild        # Rebuild and restart
 ```
@@ -94,7 +94,10 @@ Loaded by the FastAPI app and by Docker when using `env_file: ./backend/.env`.
 | `GOOGLE_LOCATION` | Yes | Vertex AI region (e.g. `us-central1`) |
 | `VERTEX_AI_API_KEY` | Yes* | API key for Vertex / Gemini. Used for vision, intent, and prompt generation. |
 | `GOOGLE_API_KEY` | No | Fallback if `VERTEX_AI_API_KEY` is not set |
-| `DATABASE_URL` | No (Docker) | PostgreSQL URL. Default described below. Docker overrides with `postgres` host. |
+| `DATABASE_URL` | No (Docker) | PostgreSQL URL. Default below. Docker overrides with `postgres` host. |
+| `ENVIRONMENT` | No | `development` (default) or `production` |
+| `SQL_ECHO` | No | Log SQL queries. Set `true` for debugging. Default: `false` |
+| `CORS_ORIGINS` | No | Comma-separated origins. Default: `http://localhost:3000` |
 
 **Service account (for Speech-to-Text):**
 
@@ -120,6 +123,20 @@ Loaded by the FastAPI app and by Docker when using `env_file: ./backend/.env`.
 | `NEXT_PUBLIC_API_URL` | No | Backend base URL. Default: `http://localhost:8003` |
 
 Set in `docker-compose` / `docker-compose.dev` or in `.env.local` for local Next.js.
+
+### Docker Compose (optional overrides)
+
+Use a project-root `.env` or `backend/.env` to override:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_USER` | `intentify` | Postgres user |
+| `POSTGRES_PASSWORD` | `intentify123` | Postgres password |
+| `POSTGRES_DB` | `intentify_db` | Postgres database |
+| `POSTGRES_PORT` | `5432` | Host port for Postgres |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8003` | Backend URL for frontend |
+
+**Production override:** `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` (or `make prod`) runs without source mounts and sets `ENVIRONMENT=production`, `SQL_ECHO=false`.
 
 ### Database (default when not in Docker)
 
@@ -178,11 +195,13 @@ Intentify/
 | `POST` | `/session/{id}/audio` | Upload audio only (legacy) |
 | `POST` | `/session/{id}/screen` | Upload screenshot only (legacy) |
 | `POST` | `/prompts/{id}/generate` | Generate prompts. Optional body: `{ "transcript": "...", "screen_summary": "..." }` to override session stored values. |
-| `GET` | `/health/models` | Check which Gemini models are available in the project |
+| `GET` | `/health/models` | Check Gemini REST (`gemini-2.5-flash-lite`) availability via API key |
 
 ---
 
 ## Local Development (without Docker)
+
+**Optional.** Use this only if you prefer not to run via Docker.
 
 ### Backend
 

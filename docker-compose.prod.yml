@@ -1,0 +1,12 @@
+# Production override: no source mounts, run from built images only.
+# Use: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    volumes: []
+    environment:
+      - ENVIRONMENT=production
+      - SQL_ECHO=false
+
+  frontend:
+    volumes: []

@@ -1,6 +1,7 @@
 import os
 import json
 import tempfile
+from urllib.parse import urlsplit, urlunsplit
 from dotenv import load_dotenv
 
 # Load .env file if it exists (won't overwrite existing env vars from docker-compose)
@@ -82,9 +83,21 @@ try:
     if _credentials_file:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _credentials_file
 except Exception as e:
-    # Credentials will be initialized when services are first used
+    # Credentials will be initialized when services are first used (Speech-to-Text)
     print(f"Warning: Could not initialize Google credentials at import: {e}")
     _credentials_file = None
+
+
+def cleanup_google_credentials() -> None:
+    """Remove temp credentials file and clear env. Call on app shutdown."""
+    global _credentials_file
+    if _credentials_file and os.path.isfile(_credentials_file):
+        try:
+            os.unlink(_credentials_file)
+        except Exception:
+            pass
+    _credentials_file = None
+    os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
 
 # Project configuration
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID", "intentify-prod-485508")
@@ -93,7 +106,77 @@ VERTEX_AI_API_KEY = os.getenv("VERTEX_AI_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", VERTEX_AI_API_KEY)  # Fallback to Vertex AI key
 
 # Database configuration
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://intentify:intentify123@localhost:5432/intentify_db"
-)
+def _running_in_docker() -> bool:
+    # /.dockerenv is present in most Docker containers. Keep this lightweight.
+    return os.path.exists("/.dockerenv") or os.getenv("DOCKER", "").lower() in ("1", "true", "yes")
+
+
+def _build_database_url(
+    *,
+    user: str,
+    password: str,
+    host: str,
+    port: str,
+    db: str,
+) -> str:
+    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
+
+
+def _replace_db_host(database_url: str, new_host: str) -> str:
+    parts = urlsplit(database_url)
+    # urlsplit netloc may include userinfo and port.
+    username = parts.username or ""
+    password = parts.password or ""
+    port = parts.port
+    userinfo = ""
+    if username and password:
+        userinfo = f"{username}:{password}@"
+    elif username and not password:
+        userinfo = f"{username}@"
+
+    hostport = new_host
+    if port is not None:
+        hostport = f"{new_host}:{port}"
+
+    new_netloc = f"{userinfo}{hostport}"
+    return urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+
+_default_local_url = "postgresql+asyncpg://intentify:intentify123@localhost:5432/intentify_db"
+_raw_db_url = (os.getenv("DATABASE_URL") or "").strip()
+
+if _raw_db_url:
+    # If a developer uses the provided .env inside Docker, "localhost" would point to the container
+    # itself. Make it work out-of-the-box by swapping localhost -> POSTGRES_HOST (default: postgres).
+    if _running_in_docker():
+        try:
+            parsed = urlsplit(_raw_db_url)
+            if (parsed.hostname or "").lower() in ("localhost", "127.0.0.1"):
+                _raw_db_url = _replace_db_host(_raw_db_url, os.getenv("POSTGRES_HOST", "postgres").strip() or "postgres")
+        except Exception:
+            # If parsing fails, keep the original value and let SQLAlchemy raise a clearer error.
+            pass
+    DATABASE_URL = _raw_db_url
+else:
+    # Fallback to discrete variables (useful for Docker/CI)
+    POSTGRES_USER = os.getenv("POSTGRES_USER", "intentify").strip() or "intentify"
+    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "intentify123").strip() or "intentify123"
+    POSTGRES_DB = os.getenv("POSTGRES_DB", "intentify_db").strip() or "intentify_db"
+    POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432").strip() or "5432"
+    default_host = "postgres" if _running_in_docker() else "localhost"
+    POSTGRES_HOST = os.getenv("POSTGRES_HOST", default_host).strip() or default_host
+
+    DATABASE_URL = _build_database_url(
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        db=POSTGRES_DB,
+    )
+SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes")
+
+# CORS (comma-separated origins; default localhost:3000)
+_cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000").strip()
+CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()] or ["http://localhost:3000"]
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")

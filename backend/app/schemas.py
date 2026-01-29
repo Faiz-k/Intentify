@@ -49,3 +49,8 @@ class PromptGenerateResponse(BaseModel):
     detailed_prompt: str
     expert_prompt: str
     structured_intent: Optional[StructuredIntent] = None
+
+
+class IntentExtractResponse(BaseModel):
+    session_id: UUID
+    structured_intent: StructuredIntent

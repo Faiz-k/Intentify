@@ -79,18 +79,26 @@ interface UnifiedCaptureProps {
   sessionId: string
   onTranscriptUpdate: (transcript: string) => void
   onScreenSummaryUpdate: (summary: string) => void
+  disabled?: boolean
+  mode?: 'screen_voice' | 'upload'
+  /** Called after a successful capture so the parent can refresh session data. */
+  onCaptureSuccess?: () => void
 }
 
 export default function UnifiedCapture({
   sessionId,
   onTranscriptUpdate,
   onScreenSummaryUpdate,
+  disabled = false,
+  mode = 'screen_voice',
+  onCaptureSuccess,
 }: UnifiedCaptureProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isCapturing, setIsCapturing] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const audioMimeTypeRef = useRef<string>('audio/webm')
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const audioStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
@@ -122,7 +130,10 @@ export default function UnifiedCapture({
   const stopCapture = useCallback(() => {
     const mr = mediaRecorderRef.current
     if (!mr || mr.state === 'inactive') return
-    if (mr.state === 'recording') mr.stop()
+    if (mr.state === 'recording') {
+      mr.requestData()
+      mr.stop()
+    }
     setIsRecording(false)
     try {
       if (stopPopupRef.current && !stopPopupRef.current.closed) {
@@ -176,9 +187,18 @@ export default function UnifiedCapture({
       video.play().catch(() => {})
       captureVideoRef.current = video
 
-      const mediaRecorder = new MediaRecorder(audioStream, {
-        mimeType: 'audio/webm;codecs=opus',
-      })
+      // Prefer opus for backend (WEBM_OPUS); fallback for Safari/other browsers
+      const mimeOptions =
+        typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? { mimeType: 'audio/webm;codecs=opus' }
+          : typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')
+            ? { mimeType: 'audio/webm' }
+            : {}
+      const chosenMime = (mimeOptions as { mimeType?: string }).mimeType ?? 'audio/webm'
+      audioMimeTypeRef.current = chosenMime
+
+      audioChunksRef.current = []
+      const mediaRecorder = new MediaRecorder(audioStream, mimeOptions)
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data)
@@ -203,7 +223,8 @@ export default function UnifiedCapture({
       }
 
       mediaRecorderRef.current = mediaRecorder
-      mediaRecorder.start()
+      // Use timeslice so ondataavailable fires periodically; avoids empty data on short recordings
+      mediaRecorder.start(250)
       setIsRecording(true)
 
       const blob = new Blob([STOP_POPUP_HTML], { type: 'text/html' })
@@ -228,7 +249,7 @@ export default function UnifiedCapture({
     try {
       setIsProcessing(true)
       const audioBlob = new Blob(audioChunksRef.current, {
-        type: 'audio/webm;codecs=opus',
+        type: audioMimeTypeRef.current,
       })
 
       canvas.toBlob(
@@ -255,6 +276,7 @@ export default function UnifiedCapture({
             if (response.data.screen_summary) {
               onScreenSummaryUpdate(response.data.screen_summary)
             }
+            onCaptureSuccess?.()
           } catch (error) {
             console.error('Error uploading capture:', error)
             alert('Failed to process capture. Please try again.')
@@ -297,34 +319,50 @@ export default function UnifiedCapture({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-4">
-        {!isRecording ? (
-          <button
-            onClick={startCapture}
-            disabled={isCapturing || isProcessing}
-            className="bg-red-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      {mode === 'screen_voice' && (
+        <div className="flex flex-wrap gap-3 items-center">
+          {!isRecording ? (
+            <button
+              onClick={startCapture}
+              disabled={disabled || isCapturing || isProcessing}
+              className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isCapturing ? 'Starting…' : 'Start capture'}
+            </button>
+          ) : (
+            <button
+              onClick={stopCapture}
+              disabled={disabled}
+              className="bg-gray-800 text-white px-6 py-2 rounded-lg font-semibold hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Stop capture
+            </button>
+          )}
+          <p className="text-sm text-gray-600">
+            Records audio + captures your screen. Stop from the floating control window.
+          </p>
+        </div>
+      )}
+
+      {mode === 'upload' && (
+        <div className="flex flex-wrap gap-3 items-center">
+          <label
+            className={`bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-colors cursor-pointer inline-block ${
+              disabled || isProcessing || isRecording ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
-            {isCapturing ? 'Starting...' : 'Start Capture'}
-          </button>
-        ) : (
-          <button
-            onClick={stopCapture}
-            className="bg-gray-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-gray-700 transition-colors"
-          >
-            Stop Capture
-          </button>
-        )}
-        <label className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-          Upload Image
-          <input
-            type="file"
-            accept="image/*"
-            onChange={captureFile}
-            className="hidden"
-            disabled={isProcessing || isRecording}
-          />
-        </label>
-      </div>
+            Upload screenshot
+            <input
+              type="file"
+              accept="image/*"
+              onChange={captureFile}
+              className="hidden"
+              disabled={disabled || isProcessing || isRecording}
+            />
+          </label>
+          <p className="text-sm text-gray-600">We’ll analyze the screenshot and summarize the context.</p>
+        </div>
+      )}
 
       {isRecording && (
         <div className="space-y-2">

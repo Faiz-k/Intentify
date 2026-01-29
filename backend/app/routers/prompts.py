@@ -5,7 +5,7 @@ from uuid import UUID
 import logging
 from app.database import get_db
 from app.models import Session as SessionModel, Prompt as PromptModel
-from app.schemas import GenerateRequest, PromptGenerateResponse
+from app.schemas import GenerateRequest, PromptGenerateResponse, IntentExtractResponse
 from app.services.intent import IntentService
 from app.services.prompt import PromptService
 from datetime import datetime
@@ -15,6 +15,63 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 intent_service = IntentService()
 prompt_service = PromptService()
+
+@router.post("/{session_id}/intent", response_model=IntentExtractResponse)
+async def extract_intent(
+    session_id: str,
+    body: GenerateRequest | None = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Extract structured intent from session data (transcript + screen summary) without generating prompts.
+    Optional body transcript/screen_summary override DB values (e.g. user-edited).
+    """
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+
+    try:
+        result = await db.execute(
+            select(SessionModel).where(SessionModel.id == session_uuid)
+        )
+        session = result.scalar_one_or_none()
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        transcript = (body.transcript if body and body.transcript is not None else None) or (session.transcript or "")
+        screen_summary = (body.screen_summary if body and body.screen_summary is not None else None) or (session.screen_summary or "")
+
+        if not transcript.strip() and not screen_summary.strip():
+            raise HTTPException(status_code=400, detail="Session needs transcript or screen summary")
+
+        try:
+            structured_intent = await intent_service.extract_intent(transcript, screen_summary)
+        except Exception as e:
+            logger.exception(f"Intent extraction failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Intent extraction failed: {str(e)}")
+
+        await db.execute(
+            update(SessionModel)
+            .where(SessionModel.id == session_uuid)
+            .values(
+                structured_intent=structured_intent,
+                updated_at=datetime.utcnow()
+            )
+        )
+        await db.commit()
+
+        return IntentExtractResponse(
+            session_id=session_uuid,
+            structured_intent=structured_intent
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error extracting intent: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{session_id}/generate", response_model=PromptGenerateResponse)
 async def generate_prompts(

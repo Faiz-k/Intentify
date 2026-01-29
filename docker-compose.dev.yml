@@ -1,7 +1,5 @@
-version: '3.8'
-
-# Development override file
-# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Development override: hot-reload for backend + frontend.
+# Use: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 services:
   backend:
